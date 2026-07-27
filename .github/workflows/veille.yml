@@ -11,6 +11,11 @@ on:
 
   # Also allow manual runs from the Actions tab, which is handy for testing.
   workflow_dispatch:
+    inputs:
+      diagnose:
+        description: "Diagnostic mode (print a report, send no alert)"
+        type: boolean
+        default: false
 
 # Prevent two runs from overlapping.
 concurrency:
@@ -39,4 +44,5 @@ jobs:
           CROUS_URL: ${{ secrets.CROUS_URL }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DIAGNOSE: ${{ github.event.inputs.diagnose == 'true' && '1' || '' }}
         run: python veille_crous.py
