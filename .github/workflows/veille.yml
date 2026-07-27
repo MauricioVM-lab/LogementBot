@@ -4,10 +4,12 @@ name: Veille logement CROUS
 
 on:
   schedule:
-    # Every 5 minutes, which is the shortest interval GitHub accepts.
-    # Note: scheduled jobs can be delayed by several minutes when the
-    # GitHub infrastructure is under load.
-    - cron: "*/5 * * * *"
+    # GitHub's own scheduler is best-effort and unreliable at 5-minute
+    # intervals (real-world gaps of 2-3h observed). The actual 5-minute
+    # cadence comes from an external cron service calling workflow_dispatch
+    # via the REST API. This hourly schedule is only a fallback in case
+    # that external trigger goes down.
+    - cron: "0 * * * *"
 
   # Also allow manual runs from the Actions tab, which is handy for testing.
   workflow_dispatch:
