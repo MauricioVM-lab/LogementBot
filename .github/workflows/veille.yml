@@ -1,0 +1,42 @@
+# Place this file in your repository at: .github/workflows/veille.yml
+
+name: Veille logement CROUS
+
+on:
+  schedule:
+    # Every 5 minutes, which is the shortest interval GitHub accepts.
+    # Note: scheduled jobs can be delayed by several minutes when the
+    # GitHub infrastructure is under load.
+    - cron: "*/5 * * * *"
+
+  # Also allow manual runs from the Actions tab, which is handy for testing.
+  workflow_dispatch:
+
+# Prevent two runs from overlapping.
+concurrency:
+  group: veille-crous
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run the watcher
+        env:
+          CROUS_URL: ${{ secrets.CROUS_URL }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python veille_crous.py
