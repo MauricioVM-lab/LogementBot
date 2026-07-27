@@ -11,6 +11,10 @@ Required environment variables:
     TELEGRAM_TOKEN     Bot token issued by @BotFather
     TELEGRAM_CHAT_ID   Numeric id of your conversation with the bot
 
+Optional:
+    DIAGNOSE=1         Print a diagnostic report instead of sending alerts.
+                       The report contains no secrets and is safe to share.
+
 Exit codes:
     0  normal run (whether or not something was found)
     1  configuration error, or the site could not be reached
@@ -20,6 +24,7 @@ import os
 import re
 import sys
 import time
+import unicodedata
 
 import requests
 
@@ -35,6 +40,7 @@ DEFAULT_URL = (
 URL = os.environ.get("CROUS_URL", DEFAULT_URL)
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+DIAGNOSE = os.environ.get("DIAGNOSE") == "1"
 
 # Identify ourselves honestly: this is a personal watcher, not a scraper.
 HEADERS = {
@@ -49,12 +55,35 @@ HEADERS = {
 MAX_ATTEMPTS = 3
 RETRY_DELAY = 5  # seconds
 
+# Each listing on the results page links to a detail page under this path.
+# Counting those links is our accent-proof fallback.
+LISTING_LINK = re.compile(r"/tools/\d+/accommodations/(\d+)")
+
+
+# --------------------------------------------------------------------------
+# Text helpers
+# --------------------------------------------------------------------------
+
+def strip_accents(text: str) -> str:
+    """
+    Lowercase the text and remove every diacritic.
+
+    This makes pattern matching immune to encoding accidents: whether the
+    page decodes as "trouve", "trouve" with an acute accent, or the mojibake
+    "trouvA(c)", the normalised form is always the same.
+    """
+    decomposed = unicodedata.normalize("NFD", text)
+    without_marks = "".join(
+        char for char in decomposed if unicodedata.category(char) != "Mn"
+    )
+    return without_marks.lower()
+
 
 # --------------------------------------------------------------------------
 # Fetching and parsing
 # --------------------------------------------------------------------------
 
-def fetch_page(url: str) -> str:
+def fetch_page(url: str) -> requests.Response:
     """Download the page, retrying a few times on transient network errors."""
     last_error = None
 
@@ -62,7 +91,16 @@ def fetch_page(url: str) -> str:
         try:
             response = requests.get(url, headers=HEADERS, timeout=20)
             response.raise_for_status()
-            return response.text
+
+            # Do not trust the default fallback. When the server omits the
+            # charset, requests assumes ISO-8859-1 and mangles every accent.
+            if not response.encoding or response.encoding.lower() in (
+                "iso-8859-1",
+                "latin-1",
+            ):
+                response.encoding = response.apparent_encoding or "utf-8"
+
+            return response
         except requests.RequestException as error:
             last_error = error
             print(f"Attempt {attempt}/{MAX_ATTEMPTS} failed: {error}")
@@ -79,15 +117,62 @@ def count_listings(html: str) -> int:
      0  -> the page explicitly states that nothing is available
     >0  -> number of listings found
     -1  -> unexpected layout, the site may have changed its wording
+
+    Three independent strategies are tried in order, so a wording change on
+    the site does not silently break the watcher.
     """
-    if "Aucun logement trouvé" in html:
+    flat = strip_accents(html)
+
+    # Strategy 1: the explicit "nothing found" banner. We deliberately stop
+    # the pattern before the accented character, so the match survives even
+    # a badly decoded page.
+    if "aucun logement trouv" in flat:
         return 0
 
-    match = re.search(r"(\d+)\s+logements?\s+trouvés?", html, flags=re.IGNORECASE)
+    # Strategy 2: the results counter, e.g. "20 logements trouves en France".
+    match = re.search(r"(\d+)\s+logements?\s+trouv", flat)
     if match:
         return int(match.group(1))
 
+    # Strategy 3: count distinct links to listing detail pages.
+    identifiers = set(LISTING_LINK.findall(html))
+    if identifiers:
+        return len(identifiers)
+
     return -1
+
+
+# --------------------------------------------------------------------------
+# Diagnostics
+# --------------------------------------------------------------------------
+
+def diagnose(response: requests.Response) -> None:
+    """Print a secret-free report describing what the site actually returned."""
+    html = response.text
+    flat = strip_accents(html)
+
+    title = re.search(r"<title>(.*?)</title>", html, flags=re.S | re.I)
+
+    print("=" * 62)
+    print("DIAGNOSTIC REPORT")
+    print("=" * 62)
+    print(f"HTTP status        : {response.status_code}")
+    print(f"Final URL path     : {response.url.split('?')[0]}")
+    print(f"Redirected         : {len(response.history) > 0}")
+    print(f"Declared encoding  : {response.encoding}")
+    print(f"Detected encoding  : {response.apparent_encoding}")
+    print(f"Body length        : {len(html)} characters")
+    print(f"Page title         : {title.group(1).strip()[:90] if title else 'NONE'}")
+    print("-" * 62)
+    print(f"'aucun logement trouv' present  : {'aucun logement trouv' in flat}")
+    print(f"'logements trouv' present       : {'logements trouv' in flat}")
+    print(f"listing links found             : {len(set(LISTING_LINK.findall(html)))}")
+    print(f"looks like a login page         : {'identification' in flat[:4000]}")
+    print(f"count_listings() returns        : {count_listings(html)}")
+    print("-" * 62)
+    print("First 400 characters of the body:")
+    print(html[:400].replace("\n", " "))
+    print("=" * 62)
 
 
 # --------------------------------------------------------------------------
@@ -119,12 +204,16 @@ def send_telegram(message: str) -> None:
 
 def main() -> int:
     try:
-        html = fetch_page(URL)
+        response = fetch_page(URL)
     except RuntimeError as error:
         print(error, file=sys.stderr)
         return 1
 
-    count = count_listings(html)
+    if DIAGNOSE:
+        diagnose(response)
+        return 0
+
+    count = count_listings(response.text)
 
     if count == 0:
         print("Nothing available.")
