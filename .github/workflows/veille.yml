@@ -44,7 +44,7 @@ jobs:
       - name: Run the watcher
         env:
           CROUS_URL: ${{ secrets.CROUS_URL }}
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           DIAGNOSE: ${{ github.event.inputs.diagnose == 'true' && '1' || '' }}
         run: python veille_crous.py

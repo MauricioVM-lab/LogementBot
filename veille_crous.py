@@ -3,15 +3,18 @@
 CROUS housing watcher
 =====================
 
-Polls a search page on trouverunlogement.lescrous.fr and sends a Telegram
+Polls a search page on trouverunlogement.lescrous.fr and sends an email
 alert as soon as at least one accommodation becomes available.
 
 Required environment variables:
     CROUS_URL          Full search URL, including your own filters
-    TELEGRAM_TOKEN     Bot token issued by @BotFather
-    TELEGRAM_CHAT_ID   Numeric id of your conversation with the bot
+    SMTP_USER          Sender mailbox address (e.g. a Gmail address)
+    SMTP_PASSWORD      SMTP password or app password for that mailbox
 
 Optional:
+    SMTP_HOST          SMTP server (default: smtp.gmail.com)
+    SMTP_PORT          SMTP port, implicit TLS (default: 465)
+    MAIL_TO            Recipient address (default: ferwizz46@gmail.com)
     DIAGNOSE=1         Print a diagnostic report instead of sending alerts.
                        The report contains no secrets and is safe to share.
 
@@ -22,9 +25,11 @@ Exit codes:
 
 import os
 import re
+import smtplib
 import sys
 import time
 import unicodedata
+from email.mime.text import MIMEText
 
 import requests
 
@@ -34,12 +39,15 @@ import requests
 
 DEFAULT_URL = (
     "https://trouverunlogement.lescrous.fr/tools/47/search"
-    "?bounds=1.3003956_43.718708_1.5653795_43.482654&locationName=Toulouse"
+    "?bounds=4.7718134_45.8082628_4.8983774_45.7073666&locationName=Lyon"
 )
 
 URL = os.environ.get("CROUS_URL", DEFAULT_URL)
-TOKEN = os.environ.get("TELEGRAM_TOKEN")
-CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
+SMTP_USER = os.environ.get("SMTP_USER")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
+MAIL_TO = os.environ.get("MAIL_TO", "ferwizz46@gmail.com")
 DIAGNOSE = os.environ.get("DIAGNOSE") == "1"
 
 # Identify ourselves honestly: this is a personal watcher, not a scraper.
@@ -179,23 +187,19 @@ def diagnose(response: requests.Response) -> None:
 # Notification
 # --------------------------------------------------------------------------
 
-def send_telegram(message: str) -> None:
-    """Push a message through the Telegram Bot API."""
-    if not TOKEN or not CHAT_ID:
-        raise RuntimeError("TELEGRAM_TOKEN and TELEGRAM_CHAT_ID must be set.")
+def send_email(subject: str, html_body: str) -> None:
+    """Send an HTML email through SMTP."""
+    if not SMTP_USER or not SMTP_PASSWORD:
+        raise RuntimeError("SMTP_USER and SMTP_PASSWORD must be set.")
 
-    api = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    response = requests.post(
-        api,
-        data={
-            "chat_id": CHAT_ID,
-            "text": message,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": "false",
-        },
-        timeout=20,
-    )
-    response.raise_for_status()
+    message = MIMEText(html_body, "html", "utf-8")
+    message["Subject"] = subject
+    message["From"] = SMTP_USER
+    message["To"] = MAIL_TO
+
+    with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=20) as server:
+        server.login(SMTP_USER, SMTP_PASSWORD)
+        server.sendmail(SMTP_USER, [MAIL_TO], message.as_string())
 
 
 # --------------------------------------------------------------------------
@@ -222,27 +226,29 @@ def main() -> int:
     if count == -1:
         # The site probably changed its wording. Better to raise a false alarm
         # than to fail silently and miss an opening.
+        subject = "CROUS watcher: unexpected page layout"
         message = (
-            "<b>CROUS watcher: unexpected page layout</b>\n\n"
+            "<b>CROUS watcher: unexpected page layout</b><br><br>"
             "The script no longer recognises the page format. "
-            "Check manually, and adapt the script if needed.\n\n"
+            "Check manually, and adapt the script if needed.<br><br>"
             f'<a href="{URL}">Ouvrir la recherche</a>'
         )
         print("Unexpected layout.")
     else:
         plural = "s" if count > 1 else ""
+        subject = f"{count} logement{plural} CROUS disponible{plural} !"
         message = (
-            f"<b>{count} logement{plural} CROUS disponible{plural} !</b>\n\n"
+            f"<b>{count} logement{plural} CROUS disponible{plural} !</b><br><br>"
             "Connecte-toi immediatement et reserve. "
-            "Prevois les 70 EUR de frais de reservation.\n\n"
+            "Prevois les 70 EUR de frais de reservation.<br><br>"
             f'<a href="{URL}">Ouvrir la recherche</a>'
         )
         print(f"{count} listing(s) found, alert sent.")
 
     try:
-        send_telegram(message)
+        send_email(subject, message)
     except Exception as error:  # noqa: BLE001
-        print(f"Telegram delivery failed: {error}", file=sys.stderr)
+        print(f"Email delivery failed: {error}", file=sys.stderr)
         return 1
 
     return 0
