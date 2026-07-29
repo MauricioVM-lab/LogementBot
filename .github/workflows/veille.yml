@@ -18,6 +18,10 @@ on:
         description: "Diagnostic mode (print a report, send no alert)"
         type: boolean
         default: false
+      test_email:
+        description: "Send a test email via SMTP, skip the site check"
+        type: boolean
+        default: false
 
 # Prevent two runs from overlapping.
 concurrency:
@@ -47,4 +51,5 @@ jobs:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           DIAGNOSE: ${{ github.event.inputs.diagnose == 'true' && '1' || '' }}
+          TEST_EMAIL: ${{ github.event.inputs.test_email == 'true' && '1' || '' }}
         run: python veille_crous.py

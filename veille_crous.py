@@ -17,6 +17,8 @@ Optional:
     MAIL_TO            Recipient address (default: ferwizz46@gmail.com)
     DIAGNOSE=1         Print a diagnostic report instead of sending alerts.
                        The report contains no secrets and is safe to share.
+    TEST_EMAIL=1       Send a single fixed test email through SMTP and exit,
+                       without checking the site at all.
 
 Exit codes:
     0  normal run (whether or not something was found)
@@ -49,6 +51,7 @@ SMTP_USER = os.environ.get("SMTP_USER")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
 MAIL_TO = os.environ.get("MAIL_TO", "ferwizz46@gmail.com")
 DIAGNOSE = os.environ.get("DIAGNOSE") == "1"
+TEST_EMAIL = os.environ.get("TEST_EMAIL") == "1"
 
 # Identify ourselves honestly: this is a personal watcher, not a scraper.
 HEADERS = {
@@ -202,11 +205,28 @@ def send_email(subject: str, html_body: str) -> None:
         server.sendmail(SMTP_USER, [MAIL_TO], message.as_string())
 
 
+def send_test_email() -> int:
+    """Send a fixed message to verify SMTP credentials, independent of the site."""
+    try:
+        send_email(
+            "CROUS watcher: test email",
+            f"<b>Test OK</b><br><br>SMTP delivery is working. Sent to {MAIL_TO}.",
+        )
+    except Exception as error:  # noqa: BLE001
+        print(f"Email delivery failed: {error}", file=sys.stderr)
+        return 1
+    print("Test email sent.")
+    return 0
+
+
 # --------------------------------------------------------------------------
 # Entry point
 # --------------------------------------------------------------------------
 
 def main() -> int:
+    if TEST_EMAIL:
+        return send_test_email()
+
     try:
         response = fetch_page(URL)
     except RuntimeError as error:
